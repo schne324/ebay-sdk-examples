@@ -19,7 +19,7 @@
  * Include the SDK by using the autoloader from Composer.
  */
 require __DIR__.'/../vendor/autoload.php';
-
+require __DIR__.'/../utils/Progress.php';
 /**
  * Include the configuration values.
  *
@@ -39,109 +39,71 @@ use \DTS\eBaySDK\Shopping\Enums;
  * Create the service object.
  */
 $service = new Services\ShoppingService([
-    'credentials' => $config['production']['credentials']
+  'credentials' => $config['production']['credentials']
 ]);
 
-/**
- * Create the request object.
- */
-$request = new Types\GetSingleItemRequestType();
+$inputFile = 'shopping/input/07-31-18/ExtractMPN.csv';
+$outputFile = 'shopping/output/07-31-18/ExtractMPN.csv';
+$outputArray = array();
+$headers = array('Item ID', 'Manufacturer Part Number', 'error');
 
-/**
- * Specify the item ID of the listing.
- */
-$request->ItemID = '111111111111';
+array_push($outputArray, $headers);
 
-/**
- * Specify that additional fields need to be returned in the response.
- */
-$request->IncludeSelector = 'ItemSpecifics,Variations,Compatibility,Details';
+$inputArray = array_map('str_getcsv', file($inputFile));
 
-/**
- * Send the request.
- */
-$response = $service->getSingleItem($request);
+array_walk($inputArray, function(&$a) use($inputArray) {
+  $a = array_combine($inputArray[0], $a);
+});
 
-/**
- * Output the result of calling the service operation.
- */
-if (isset($response->Errors)) {
+// remove headers
+array_shift($inputArray);
+
+$idx = 1;
+$total = count($inputArray);
+$progress = new Progress($inputArray);
+
+foreach ($inputArray as $row) {
+  $progress->log($idx);
+  $itemID = $row['Item ID'];
+  $request = new Types\GetSingleItemRequestType();
+  $request->ItemID = $itemID;
+  $request->IncludeSelector = 'ItemSpecifics,Variations,Compatibility,Details';
+  $response = $service->getSingleItem($request);
+  $mpn = '';
+  $err = '';
+
+  if (isset($response->Errors)) {
     foreach ($response->Errors as $error) {
-        printf(
-            "%s: %s\n%s\n\n",
-            $error->SeverityCode === Enums\SeverityCodeType::C_ERROR ? 'Error' : 'Warning',
-            $error->ShortMessage,
-            $error->LongMessage
-        );
+      $err = $error->ShortMessage;
     }
-}
+  }
 
-if ($response->Ack !== 'Failure') {
+  if ($response->Ack !== 'Failure') {
     $item = $response->Item;
 
-    print("$item->Title\n");
-
-    printf(
-        "Quantity sold %s, quantiy available %s\n",
-        $item->QuantitySold,
-        $item->Quantity - $item->QuantitySold
-    );
-
     if (isset($item->ItemSpecifics)) {
-        print("\nThis item has the following item specifics:\n\n");
-
-        foreach ($item->ItemSpecifics->NameValueList as $nameValues) {
-            printf(
-                "%s: %s\n",
-                $nameValues->Name,
-                implode(', ', iterator_to_array($nameValues->Value))
-            );
+      foreach ($item->ItemSpecifics->NameValueList as $nameValues) {
+        if ($nameValues->Name === "Manufacturer Part Number") {
+          $mpn = implode(', ', iterator_to_array($nameValues->Value));
         }
+      }
     }
+  }
 
-    if (isset($item->Variations)) {
-        print("\nThis item has the following variations:\n");
-
-        foreach ($item->Variations->Variation as $variation) {
-            printf(
-                "\nSKU: %s\nStart Price: %s\n",
-                $variation->SKU,
-                $variation->StartPrice->value
-            );
-
-            printf(
-                "Quantity sold %s, quantiy available %s\n",
-                $variation->SellingStatus->QuantitySold,
-                $variation->Quantity - $variation->SellingStatus->QuantitySold
-            );
-
-            foreach ($variation->VariationSpecifics as $specific) {
-                foreach ($specific->NameValueList as $nameValues) {
-                    printf(
-                        "%s: %s\n",
-                        $nameValues->Name,
-                        implode(', ', iterator_to_array($nameValues->Value))
-                    );
-                }
-            }
-        }
-    }
-
-    if (isset($item->ItemCompatibilityCount)) {
-        printf("\nThis item is compatible with %s vehicles:\n\n", $item->ItemCompatibilityCount);
-
-        // Only show the first 3.
-        $limit = min($item->ItemCompatibilityCount, 3);
-        for ($x = 0; $x < $limit; $x++) {
-            $compatibility = $item->ItemCompatibilityList->Compatibility[$x];
-            foreach ($compatibility->NameValueList as $nameValues) {
-                printf(
-                    "%s: %s\n",
-                    $nameValues->Name,
-                    implode(', ', iterator_to_array($nameValues->Value))
-                );
-            }
-            printf("Notes: %s \n", $compatibility->CompatibilityNotes);
-        }
-    }
+  array_push($row, $mpn);
+  array_push($row, $err);
+  array_push($outputArray, $row);
+  $idx++;
 }
+
+print("\nAll requests complete\n");
+
+// write the csv
+$fp = fopen($outputFile, 'w');
+
+foreach ($outputArray as $fields) {
+  fputcsv($fp, $fields);
+}
+
+fclose($fp);
+print("\n${outputFile} written");

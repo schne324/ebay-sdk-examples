@@ -55,7 +55,7 @@ $request->dataset = ['DisplayableProductDetails'];
  * Assign the ePID.
  */
 $request->productIdentifier = new Types\ProductIdentifier();
-$request->productIdentifier->ePID = '193042315';
+$request->productIdentifier->ePID = '110444707';
 
 /**
  * Limit the results to 10 items per page.
